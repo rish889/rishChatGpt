@@ -2,14 +2,18 @@ import { useEffect, useState } from 'react'
 import {
   type ConversationSummary,
   type Message,
+  UnauthorizedError,
   createConversation,
   fetchConversations,
   fetchMessages,
   streamChat,
 } from './api'
+import { clearToken, getToken, setToken } from './auth'
+import Login from './Login'
 import Sidebar from './Sidebar'
 
 function App() {
+  const [token, setTokenState] = useState<string | null>(() => getToken())
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -17,12 +21,30 @@ function App() {
   const [isStreaming, setIsStreaming] = useState(false)
 
   useEffect(() => {
+    if (!token) return
     fetchConversations().then(setConversations).catch(() => {})
-  }, [])
+  }, [token])
+
+  function handleAuthenticated(newToken: string) {
+    setToken(newToken)
+    setTokenState(newToken)
+  }
+
+  function logOut() {
+    clearToken()
+    setTokenState(null)
+    setConversations([])
+    setCurrentConversationId(null)
+    setMessages([])
+  }
 
   async function selectConversation(id: number) {
     setCurrentConversationId(id)
-    setMessages(await fetchMessages(id))
+    try {
+      setMessages(await fetchMessages(id))
+    } catch (err) {
+      if (err instanceof UnauthorizedError) logOut()
+    }
   }
 
   function startNewChat() {
@@ -64,7 +86,11 @@ function App() {
       })
 
       fetchConversations().then(setConversations).catch(() => {})
-    } catch {
+    } catch (err) {
+      if (err instanceof UnauthorizedError) {
+        logOut()
+        return
+      }
       setMessages((prev) => {
         const next = [...prev]
         next[next.length - 1] = {
@@ -85,6 +111,10 @@ function App() {
     }
   }
 
+  if (!token) {
+    return <Login onAuthenticated={handleAuthenticated} />
+  }
+
   return (
     <div className="flex h-svh w-full">
       <Sidebar
@@ -92,6 +122,7 @@ function App() {
         currentConversationId={currentConversationId}
         onSelect={selectConversation}
         onNewChat={startNewChat}
+        onLogOut={logOut}
       />
 
       <div className="flex flex-1 flex-col max-w-2xl mx-auto px-4">

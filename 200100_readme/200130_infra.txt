@@ -1,1 +1,2 @@
+cd /home/rishabh/workspace/rish/rishChatGpt/infra && docker compose down -v
 cd /home/rishabh/workspace/rish/rishChatGpt/infra && docker compose up -d
