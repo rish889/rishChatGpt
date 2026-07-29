@@ -1,2 +1,5 @@
 .idea/
 200100_readme/800100_secrets.txt
+backend/.env
+backend/venv/
+backend/__pycache__/
