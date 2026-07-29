@@ -81,25 +81,6 @@ def build_history(conversation: Conversation, new_message: str) -> list[dict]:
     return history
 
 
-@app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
-    conversation = db.get(Conversation, request.conversation_id)
-    if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    history = build_history(conversation, request.message)
-    response = client.chat.completions.create(model=model, messages=history)
-    reply = response.choices[0].message.content
-
-    db.add(Message(conversation_id=conversation.id, role="user", content=request.message))
-    db.add(Message(conversation_id=conversation.id, role="assistant", content=reply))
-    if conversation.title is None:
-        conversation.title = request.message[:TITLE_LENGTH]
-    db.commit()
-
-    return ChatResponse(reply=reply)
-
-
 @app.post("/chat/stream")
 def chat_stream(request: ChatRequest) -> StreamingResponse:
     db = SessionLocal()
