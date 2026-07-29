@@ -1,6 +1,6 @@
 # Build Your Own ChatGPT — End-to-End LLM Platform
 
-Architecture: wrapper on a hosted LLM API (Anthropic/OpenAI), not training your own model.
+Architecture: wrapper on OpenAI's hosted LLM API, not training your own model.
 You build the platform around the model — chat UI, backend, auth, history, streaming — and
 call out to the model for completions.
 
@@ -13,7 +13,7 @@ Browser (chat UI)
 Backend API (auth, sessions, rate limiting)
    │  server-side SDK call, API key never exposed to client
    ▼
-LLM Provider API (Claude / GPT)
+LLM Provider API (OpenAI)
    │
    ▼
 Database (users, conversations, messages)
@@ -21,27 +21,31 @@ Database (users, conversations, messages)
 
 ## Tech stack (suggested, swap freely)
 
-- Backend: Node.js (Express/Fastify) or Python (FastAPI)
-- Frontend: React + Vite, or Next.js if you want SSR/routing built-in
+- Backend: Python (FastAPI)
+- Frontend: React + Vite (TypeScript, Tailwind CSS), or Next.js if you want SSR/routing built-in
 - DB: Postgres (conversations/messages/users) — SQLite fine for local dev
 - Auth: session cookie or JWT; start with a single hardcoded user, add real auth later
-- LLM SDK: Anthropic Python/TS SDK (or OpenAI SDK) — see `claude-api` skill for model IDs/pricing/streaming details
+- LLM SDK: OpenAI Python SDK (`openai`) — chat completions to start; revisit the Responses API/streaming once Phase 2 lands
 - Deployment: Docker Compose locally → Fly.io/Render/Railway for a simple prod deploy
 
 ## Phased milestones
 
-### Phase 0 — Hello, model
-- Single script that sends one prompt to the LLM API and prints the response.
+### Phase 0 — Hello, model ✅ done
+- Single script that sends one prompt to the OpenAI API and prints the response.
 - Goal: confirm API key, SDK, and billing work end-to-end.
+- Implemented in `backend/hello.py` (see `backend/.env.example` for setup).
 
-### Phase 1 — Minimal backend + single-turn chat
+### Phase 1 — Minimal backend + single-turn chat ✅ done
 - Backend endpoint `POST /chat` that takes a message, calls the LLM, returns the reply.
 - No streaming, no persistence, no auth. Plain HTML form or curl is a fine client.
 
-### Phase 2 — Real chat UI + streaming
-- React chat UI: message list, input box, send button, loading state.
-- Switch backend to stream tokens (SSE) so replies appear incrementally.
+### Phase 2 — Real chat UI + streaming ✅ done
+- React (Vite + TypeScript + Tailwind) chat UI: message list, input box, send button, loading state.
+- Backend gained `POST /chat/stream`, which streams the OpenAI response as raw text chunks
+  (not full SSE framing — a plain chunked `text/plain` response, consumed via `fetch` +
+  `ReadableStream` on the frontend). Simpler than SSE while still streaming incrementally.
 - This is the first point it "feels like ChatGPT."
+- Implemented in `frontend/` (see `frontend/src/App.tsx`) and `backend/main.py`.
 
 ### Phase 3 — Conversation history & persistence
 - DB schema: `users`, `conversations`, `messages`.
@@ -75,5 +79,6 @@ BUILD_PLAN.md this file
 
 ## Next step
 
-Start at Phase 0 in a new `/backend` directory: pick Node or Python, install the LLM SDK,
-and get one script printing a real model response before touching any UI or DB code.
+Phases 0–2 are done. Next: Phase 3 — conversation history & persistence (DB schema for
+users/conversations/messages, backend sends prior messages back to the model, UI sidebar
+with past conversations).
