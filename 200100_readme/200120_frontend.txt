@@ -1,4 +1,4 @@
 npx tsc --noEmit
-cd /home/rishabh/workspace/rish/rishChatGpt/frontend && npm run dev
+cd /home/rishabh/workspace/rish/rishChatGpt/frontend && npx tsc --noEmit && npm run dev
 
 http://localhost:5173/
