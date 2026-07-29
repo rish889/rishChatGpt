@@ -1,5 +1,5 @@
 RoadMap : https://chatgpt.com/c/6a67ff2a-1ac4-83ee-a2db-c0e3a779ce54
-https://chatgpt.com/c/6a66eba7-cef0-83ee-b29b-71289c313bdf
+Build Your Own ChatGPT (End-to-End LLM Platform) : https://chatgpt.com/c/6a66eba7-cef0-83ee-b29b-71289c313bdf
 https://chatgpt.com/c/6a66e8b4-4e70-83ee-818e-04319d1a8212
 https://chatgpt.com/c/6a66e6bb-0f48-83ee-9b4e-fdf91e8619e6
 
