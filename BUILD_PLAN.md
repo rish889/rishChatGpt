@@ -23,7 +23,7 @@ Database (users, conversations, messages)
 
 - Backend: Python (FastAPI)
 - Frontend: React + Vite (TypeScript, Tailwind CSS), or Next.js if you want SSR/routing built-in
-- DB: Postgres (conversations/messages/users) — SQLite fine for local dev
+- DB: Postgres (conversations/messages/users), run locally via Docker Compose (`infra/docker-compose.yml`)
 - Auth: session cookie or JWT; start with a single hardcoded user, add real auth later
 - LLM SDK: OpenAI Python SDK (`openai`) — chat completions to start; revisit the Responses API/streaming once Phase 2 lands
 - Deployment: Docker Compose locally → Fly.io/Render/Railway for a simple prod deploy
@@ -47,10 +47,17 @@ Database (users, conversations, messages)
 - This is the first point it "feels like ChatGPT."
 - Implemented in `frontend/` (see `frontend/src/App.tsx`) and `backend/main.py`.
 
-### Phase 3 — Conversation history & persistence
-- DB schema: `users`, `conversations`, `messages`.
-- Backend maintains conversation context (send prior messages back to the model).
-- UI: sidebar with past conversations, ability to start a new chat / resume one.
+### Phase 3 — Conversation history & persistence ✅ done
+- DB schema: `conversations`, `messages` (Postgres via SQLAlchemy, run locally with
+  Docker Compose — see `infra/docker-compose.yml`). `users` deferred to Phase 4 — no
+  point in a users table nothing references until real auth exists.
+- Backend maintains conversation context: `/chat` and `/chat/stream` load prior messages
+  for a `conversation_id` from the DB, send them back to the model, then persist the new
+  turn (title auto-set from the first message).
+- UI: sidebar (`frontend/src/Sidebar.tsx`) listing past conversations, "+ New chat", click
+  to resume. New conversations are created lazily on first send.
+- Implemented in `infra/docker-compose.yml`, `backend/db.py`, `backend/models.py`,
+  `backend/main.py`, and `frontend/src/{App.tsx,Sidebar.tsx,api.ts}`.
 
 ### Phase 4 — Auth & multi-user
 - Real login (email+password or OAuth).
@@ -79,6 +86,5 @@ BUILD_PLAN.md this file
 
 ## Next step
 
-Phases 0–2 are done. Next: Phase 3 — conversation history & persistence (DB schema for
-users/conversations/messages, backend sends prior messages back to the model, UI sidebar
-with past conversations).
+Phases 0–3 are done. Next: Phase 4 — auth & multi-user (real login, conversations scoped
+per user, rate limiting per user).

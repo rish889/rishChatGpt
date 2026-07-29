@@ -1,14 +1,6 @@
 Build Your Own ChatGPT (End-to-End LLM Platform)
 
-Run:
-cd backend
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # then paste your OpenAI API key in
-python hello.py
-
-
-
+python3 -m venv venv
 
 cd /home/rishabh/workspace/rish/rishChatGpt/backend && source venv/bin/activate && pip install -r requirements.txt && uvicorn main:app --reload
 
