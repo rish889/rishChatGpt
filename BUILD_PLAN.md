@@ -59,9 +59,21 @@ Database (users, conversations, messages)
 - Implemented in `infra/docker-compose.yml`, `backend/db.py`, `backend/models.py`,
   `backend/main.py`, and `frontend/src/{App.tsx,Sidebar.tsx,api.ts}`.
 
-### Phase 4 — Auth & multi-user
-- Real login (email+password or OAuth).
-- Conversations scoped per user; rate limiting per user to control API cost.
+### Phase 4 — Auth & multi-user ✅ done
+- Real login: email+password signup/login, `bcrypt` password hashing, JWT (`pyjwt`,
+  7-day expiry) issued on login/signup and sent as `Authorization: Bearer <token>`.
+- `users` table added (deferred from Phase 3); `conversations.user_id` scopes every
+  conversation to its owner. All conversation/chat endpoints require
+  `Depends(get_current_user)` and 404 (not 403) on conversations owned by someone else,
+  to avoid leaking which IDs exist.
+- Rate limiting: simple in-memory per-user fixed-window limiter (20 messages/hour) on
+  `/chat/stream`, since that's the endpoint that actually spends OpenAI credits. In-memory
+  is fine for a single-process learning app; revisit (Redis) if this ever runs multi-process.
+- UI: `frontend/src/Login.tsx` (login/signup form), token stored in `localStorage`
+  (`frontend/src/auth.ts`), attached to every API call in `frontend/src/api.ts`. A 401
+  anywhere logs the user out and drops them back to the login screen.
+- Implemented in `backend/auth.py`, `backend/models.py`, `backend/main.py`, and
+  `frontend/src/{App.tsx,Login.tsx,Sidebar.tsx,api.ts,auth.ts}`.
 
 ### Phase 5 — System prompts, model/parameter controls
 - Let users (or you, as admin) configure system prompt, temperature, model choice.
@@ -86,5 +98,5 @@ BUILD_PLAN.md this file
 
 ## Next step
 
-Phases 0–3 are done. Next: Phase 4 — auth & multi-user (real login, conversations scoped
-per user, rate limiting per user).
+Phases 0–4 are done. Next: Phase 5 — system prompts, model/parameter controls (let users
+configure system prompt, temperature, model choice).

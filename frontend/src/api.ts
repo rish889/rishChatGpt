@@ -1,3 +1,5 @@
+import { getToken } from './auth'
+
 export const API_BASE = 'http://127.0.0.1:8000'
 
 export type Role = 'user' | 'assistant'
@@ -13,20 +15,66 @@ export interface ConversationSummary {
   created_at: string
 }
 
+export interface AuthResponse {
+  access_token: string
+  token_type: string
+}
+
+export class UnauthorizedError extends Error {}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { ...authHeaders(), ...(init.headers ?? {}) },
+  })
+  if (res.status === 401) throw new UnauthorizedError('Session expired')
+  return res
+}
+
+async function extractError(res: Response, fallback: string): Promise<never> {
+  const body = await res.json().catch(() => null)
+  throw new Error(body?.detail ?? fallback)
+}
+
+export async function signup(email: string, password: string): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+  if (!res.ok) return extractError(res, 'Signup failed')
+  return res.json()
+}
+
+export async function login(email: string, password: string): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+  if (!res.ok) return extractError(res, 'Login failed')
+  return res.json()
+}
+
 export async function fetchConversations(): Promise<ConversationSummary[]> {
-  const res = await fetch(`${API_BASE}/conversations`)
+  const res = await apiFetch('/conversations')
   if (!res.ok) throw new Error('Failed to load conversations')
   return res.json()
 }
 
 export async function createConversation(): Promise<ConversationSummary> {
-  const res = await fetch(`${API_BASE}/conversations`, { method: 'POST' })
+  const res = await apiFetch('/conversations', { method: 'POST' })
   if (!res.ok) throw new Error('Failed to create conversation')
   return res.json()
 }
 
 export async function fetchMessages(conversationId: number): Promise<Message[]> {
-  const res = await fetch(`${API_BASE}/conversations/${conversationId}/messages`)
+  const res = await apiFetch(`/conversations/${conversationId}/messages`)
   if (!res.ok) throw new Error('Failed to load messages')
   return res.json()
 }
@@ -36,7 +84,7 @@ export async function streamChat(
   message: string,
   onChunk: (chunk: string) => void,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/stream`, {
+  const res = await apiFetch('/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ conversation_id: conversationId, message }),

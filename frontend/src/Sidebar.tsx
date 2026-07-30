@@ -5,6 +5,7 @@ interface SidebarProps {
   currentConversationId: number | null
   onSelect: (id: number) => void
   onNewChat: () => void
+  onLogOut: () => void
 }
 
 function Sidebar({
@@ -12,6 +13,7 @@ function Sidebar({
   currentConversationId,
   onSelect,
   onNewChat,
+  onLogOut,
 }: SidebarProps) {
   return (
     <aside className="w-64 shrink-0 border-r border-neutral-200 dark:border-neutral-800 flex flex-col">
@@ -40,6 +42,15 @@ function Sidebar({
           </button>
         ))}
       </nav>
+      <div className="p-3 border-t border-neutral-200 dark:border-neutral-800">
+        <button
+          type="button"
+          className="w-full rounded-xl px-3 py-2 text-left text-sm text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          onClick={onLogOut}
+        >
+          Log out
+        </button>
+      </div>
     </aside>
   )
 }
