@@ -2,19 +2,24 @@ import { useEffect, useState } from 'react'
 import {
   type ConversationSettings,
   type ConversationSummary,
+  type DocumentSummary,
   type Message,
   UnauthorizedError,
   createConversation,
+  deleteDocument,
   fetchConversations,
+  fetchDocuments,
   fetchMessages,
   fetchModels,
   streamChat,
   updateConversationSettings,
+  uploadDocument,
 } from './api'
 import { clearToken, getToken, setToken } from './auth'
 import Login from './Login'
 import Sidebar from './Sidebar'
 import SettingsPanel from './SettingsPanel'
+import Documents from './Documents'
 
 const DEFAULT_SETTINGS: ConversationSettings = {
   system_prompt: null,
@@ -32,6 +37,7 @@ function App() {
   const [settings, setSettings] = useState<ConversationSettings>(DEFAULT_SETTINGS)
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [showSettings, setShowSettings] = useState(false)
+  const [documents, setDocuments] = useState<DocumentSummary[]>([])
 
   useEffect(() => {
     if (!token) return
@@ -64,6 +70,7 @@ function App() {
     }
     try {
       setMessages(await fetchMessages(id))
+      setDocuments(await fetchDocuments(id))
     } catch (err) {
       if (err instanceof UnauthorizedError) logOut()
     }
@@ -73,6 +80,37 @@ function App() {
     setCurrentConversationId(null)
     setMessages([])
     setSettings(DEFAULT_SETTINGS)
+    setDocuments([])
+  }
+
+  async function uploadFile(file: File) {
+    try {
+      let conversationId = currentConversationId
+      if (conversationId === null) {
+        const conversation = await createConversation(settings)
+        conversationId = conversation.id
+        setCurrentConversationId(conversationId)
+        setConversations((prev) => [conversation, ...prev])
+      }
+      const doc = await uploadDocument(conversationId, file)
+      setDocuments((prev) => [...prev, doc])
+    } catch (err) {
+      if (err instanceof UnauthorizedError) {
+        logOut()
+        return
+      }
+      throw err
+    }
+  }
+
+  async function removeDocument(documentId: number) {
+    if (currentConversationId === null) return
+    try {
+      await deleteDocument(currentConversationId, documentId)
+      setDocuments((prev) => prev.filter((d) => d.id !== documentId))
+    } catch (err) {
+      if (err instanceof UnauthorizedError) logOut()
+    }
   }
 
   async function updateSettings(patch: Partial<ConversationSettings>) {
@@ -209,6 +247,7 @@ function App() {
         </div>
 
         <div className="py-4 border-t border-neutral-200 dark:border-neutral-800">
+          <Documents documents={documents} onUpload={uploadFile} onDelete={removeDocument} />
           <div className="flex items-end gap-2">
             <textarea
               className="flex-1 resize-none rounded-xl border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"

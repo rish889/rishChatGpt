@@ -26,6 +26,12 @@ export interface AuthResponse {
   token_type: string
 }
 
+export interface DocumentSummary {
+  id: number
+  filename: string
+  created_at: string
+}
+
 export class UnauthorizedError extends Error {}
 
 function authHeaders(): Record<string, string> {
@@ -108,6 +114,33 @@ export async function fetchMessages(conversationId: number): Promise<Message[]> 
   const res = await apiFetch(`/conversations/${conversationId}/messages`)
   if (!res.ok) throw new Error('Failed to load messages')
   return res.json()
+}
+
+export async function fetchDocuments(conversationId: number): Promise<DocumentSummary[]> {
+  const res = await apiFetch(`/conversations/${conversationId}/documents`)
+  if (!res.ok) throw new Error('Failed to load documents')
+  return res.json()
+}
+
+export async function uploadDocument(
+  conversationId: number,
+  file: File,
+): Promise<DocumentSummary> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await apiFetch(`/conversations/${conversationId}/documents`, {
+    method: 'POST',
+    body: formData,
+  })
+  if (!res.ok) return extractError(res, 'Failed to upload document')
+  return res.json()
+}
+
+export async function deleteDocument(conversationId: number, documentId: number): Promise<void> {
+  const res = await apiFetch(`/conversations/${conversationId}/documents/${documentId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error('Failed to delete document')
 }
 
 export async function streamChat(
