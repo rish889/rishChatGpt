@@ -75,9 +75,21 @@ Database (users, conversations, messages)
 - Implemented in `backend/auth.py`, `backend/models.py`, `backend/main.py`, and
   `frontend/src/{App.tsx,Login.tsx,Sidebar.tsx,api.ts,auth.ts}`.
 
-### Phase 5 — System prompts, model/parameter controls
-- Let users (or you, as admin) configure system prompt, temperature, model choice.
-- Add a model picker if supporting multiple providers/models.
+### Phase 5 — System prompts, model/parameter controls ✅ done
+- `conversations` gained `system_prompt`, `model`, `temperature` columns. Settings are
+  per-conversation: set them before the first message (applied when the conversation is
+  lazily created) or mid-conversation via `PATCH /conversations/{id}` (applies to the next
+  turn).
+- `build_history` prepends a `system` message when `system_prompt` is set; `chat_stream`
+  uses `conversation.model or DEFAULT_MODEL` and `conversation.temperature` (falls back to
+  `1.0`, OpenAI's default). Model choice is validated server-side against `ALLOWED_MODELS`
+  (400 on anything else) so a bad value fails fast instead of erroring inside the stream.
+  `GET /models` exposes the allowed list so the UI doesn't hardcode a second copy.
+- UI: "Settings" button in the header opens `frontend/src/SettingsPanel.tsx` — model
+  dropdown, temperature slider, system prompt textarea. Selecting a past conversation loads
+  its saved settings.
+- Implemented in `backend/models.py`, `backend/main.py`, and
+  `frontend/src/{App.tsx,SettingsPanel.tsx,api.ts}`.
 
 ### Phase 6 — Tool use / RAG (optional, advanced)
 - File upload → embed → retrieve → inject into context (basic RAG).
@@ -98,5 +110,5 @@ BUILD_PLAN.md this file
 
 ## Next step
 
-Phases 0–4 are done. Next: Phase 5 — system prompts, model/parameter controls (let users
-configure system prompt, temperature, model choice).
+Phases 0–5 are done. Next: Phase 6 — tool use / RAG (optional, advanced), or Phase 7 —
+production hardening (streaming error handling, retries, timeouts, observability).

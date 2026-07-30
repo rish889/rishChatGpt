@@ -9,7 +9,13 @@ export interface Message {
   content: string
 }
 
-export interface ConversationSummary {
+export interface ConversationSettings {
+  system_prompt: string | null
+  model: string | null
+  temperature: number | null
+}
+
+export interface ConversationSummary extends ConversationSettings {
   id: number
   title: string | null
   created_at: string
@@ -67,9 +73,34 @@ export async function fetchConversations(): Promise<ConversationSummary[]> {
   return res.json()
 }
 
-export async function createConversation(): Promise<ConversationSummary> {
-  const res = await apiFetch('/conversations', { method: 'POST' })
+export async function createConversation(
+  settings: Partial<ConversationSettings> = {},
+): Promise<ConversationSummary> {
+  const res = await apiFetch('/conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
   if (!res.ok) throw new Error('Failed to create conversation')
+  return res.json()
+}
+
+export async function updateConversationSettings(
+  conversationId: number,
+  settings: Partial<ConversationSettings>,
+): Promise<ConversationSummary> {
+  const res = await apiFetch(`/conversations/${conversationId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+  if (!res.ok) throw new Error('Failed to update conversation settings')
+  return res.json()
+}
+
+export async function fetchModels(): Promise<string[]> {
+  const res = await apiFetch('/models')
+  if (!res.ok) throw new Error('Failed to load models')
   return res.json()
 }
 
