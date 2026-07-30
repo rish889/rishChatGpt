@@ -91,8 +91,24 @@ Database (users, conversations, messages)
 - Implemented in `backend/models.py`, `backend/main.py`, and
   `frontend/src/{App.tsx,SettingsPanel.tsx,api.ts}`.
 
-### Phase 6 — RAG
-- File upload → embed → retrieve → inject into context (basic RAG).
+### Phase 6 — RAG ✅ done
+- `documents`/`chunks` tables (Postgres via `pgvector`, image switched to
+  `pgvector/pgvector:pg16` in `infra/docker-compose.yml`); documents are scoped to a
+  conversation, not a user, so retrieval never crosses conversations.
+- `POST /conversations/{id}/documents` extracts text (`.txt`/`.md` decoded directly, `.pdf`
+  via `pypdf`), splits it into ~1000-char overlapping chunks, embeds each chunk with
+  `text-embedding-3-small`, and stores chunk + embedding. `GET`/`DELETE` round out listing
+  and removal (cascades to its chunks).
+- `chat_stream`'s `build_history` embeds the new user message and pulls the top-4 chunks for
+  that conversation by cosine distance (pgvector `<=>`), skipping the embedding call entirely
+  when the conversation has no documents. Retrieved chunks are injected as a separate system
+  message ("use if relevant, ignore if not") ahead of prior turns.
+- UI: a chip list + "+ Attach file" control (`frontend/src/Documents.tsx`) sits above the
+  message input; uploading before any message exists lazily creates the conversation first,
+  same as sending a message does.
+- Implemented in `backend/{db.py,models.py,llm.py,rag.py,routers/documents.py,
+  routers/chat.py,main.py}`, `infra/docker-compose.yml`, and
+  `frontend/src/{api.ts,Documents.tsx,App.tsx}`.
 
 ### Phase 7 — Tool use
 - give the model tools (web search, code execution) via the provider's tool-use API.
@@ -112,4 +128,4 @@ BUILD_PLAN.md this file
 
 ## Next step
 
-Phases 0–5 are done.
+Phases 0–6 are done.

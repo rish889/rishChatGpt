@@ -4,11 +4,13 @@ from time import time
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from db import SessionLocal
 from llm import DEFAULT_MODEL, DEFAULT_TEMPERATURE, client
 from models import Conversation, Message, User
+from rag import retrieve_relevant_chunks
 from routers.conversations import TITLE_LENGTH, get_owned_conversation
 
 router = APIRouter()
@@ -34,10 +36,26 @@ class ChatRequest(BaseModel):
     message: str
 
 
-def build_history(conversation: Conversation, new_message: str) -> list[dict]:
+def build_history(conversation: Conversation, new_message: str, db: Session) -> list[dict]:
     history = []
     if conversation.system_prompt:
         history.append({"role": "system", "content": conversation.system_prompt})
+
+    if conversation.documents:
+        relevant_chunks = retrieve_relevant_chunks(db, conversation.id, new_message)
+        if relevant_chunks:
+            context = "\n\n---\n\n".join(chunk.content for chunk in relevant_chunks)
+            history.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Use the following excerpts from the user's uploaded documents to "
+                        "help answer, if relevant. If they aren't relevant, ignore them.\n\n"
+                        + context
+                    ),
+                }
+            )
+
     history.extend({"role": m.role, "content": m.content} for m in conversation.messages)
     history.append({"role": "user", "content": new_message})
     return history
@@ -52,7 +70,7 @@ def chat_stream(
     db = SessionLocal()
     try:
         conversation = get_owned_conversation(request.conversation_id, db, current_user)
-        history = build_history(conversation, request.message)
+        history = build_history(conversation, request.message, db)
     except HTTPException:
         db.close()
         raise

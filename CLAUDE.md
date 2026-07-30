@@ -11,10 +11,10 @@ phase implemented) — read it before making structural changes, since it explai
 are built the way they are (e.g. why `users` was deferred to Phase 4, why streaming uses plain
 chunked text instead of SSE, why rate limiting is in-memory).
 
-Phases 0–5 are done (hello-world script, single-turn chat, streaming chat UI, conversation
+Phases 0–6 are done (hello-world script, single-turn chat, streaming chat UI, conversation
 history/persistence, auth/multi-user, per-conversation system prompt/model/temperature
-settings). Phase 6 (RAG) is in progress on this branch; Phases 7–8 (tool use, production
-hardening) are not started.
+settings, per-conversation document RAG). Phases 7–8 (tool use, production hardening) are not
+started.
 
 ## Commands
 
@@ -35,9 +35,12 @@ npm run lint          # oxlint
 
 Infra (from `infra/`):
 ```
-docker compose up -d      # start Postgres (rishchatgpt/rishchatgpt on :5432)
+docker compose up -d      # start Postgres w/ pgvector (rishchatgpt/rishchatgpt on :5432)
 docker compose down -v    # stop and wipe the volume
 ```
+The `vector` extension (`CREATE EXTENSION IF NOT EXISTS vector`) is enabled automatically by
+`backend/db.py` on startup — the Postgres image must be `pgvector/pgvector:pg16` (not plain
+`postgres`) for that to succeed.
 
 There are no automated tests anywhere in this repo. Verify backend changes via `/docs`
 (Swagger UI) or curl; verify frontend changes with `tsc --noEmit` plus manually exercising the
@@ -57,24 +60,35 @@ Browser (React/Vite)  →  FastAPI backend  →  OpenAI API
   creates tables on startup via `Base.metadata.create_all`.
 - `db.py` — SQLAlchemy engine/session (`SessionLocal`, `get_db` dependency), `DATABASE_URL`
   from env.
-- `models.py` — three tables: `User`, `Conversation` (owns `system_prompt`/`model`/
-  `temperature` overrides, scoped to a user), `Message` (role + content, ordered by id).
+- `models.py` — five tables: `User`, `Conversation` (owns `system_prompt`/`model`/
+  `temperature` overrides, scoped to a user), `Message` (role + content, ordered by id),
+  `Document` and `Chunk` (RAG — see below). `EMBEDDING_DIM` here must match
+  `llm.EMBEDDING_MODEL`'s output size.
 - `llm.py` — OpenAI client singleton, `DEFAULT_MODEL`, `DEFAULT_TEMPERATURE`, and
   `ALLOWED_MODELS` (the server-side whitelist — any model not in this set is rejected with
-  400 before it reaches the stream).
+  400 before it reaches the stream); `EMBEDDING_MODEL` and `embed_texts()` for RAG.
+- `rag.py` — `extract_text()` (`.txt`/`.md` decoded directly, `.pdf` via `pypdf`),
+  `chunk_text()` (character-based, ~1000 chars with 150 overlap — no tokenizer), and
+  `retrieve_relevant_chunks()` (pgvector cosine-distance `ORDER BY ... LIMIT` scoped to one
+  conversation).
 - `auth.py` — bcrypt password hashing, JWT issuance/verification (`pyjwt`, 7-day expiry),
-  `get_current_user` FastAPI dependency used to gate every conversation/chat route.
+  `get_current_user` FastAPI dependency used to gate every conversation/chat/document route.
 - `routers/auth.py` — `/auth/signup`, `/auth/login`.
 - `routers/conversations.py` — CRUD for conversations/messages/settings, plus
   `get_owned_conversation` (shared helper: 404, not 403, if the conversation belongs to
   someone else — avoids leaking which IDs exist) and `/models` (exposes `ALLOWED_MODELS` so
   the frontend doesn't hardcode a second copy).
+- `routers/documents.py` — upload (extract → chunk → embed → store, 5MB cap), list, and
+  delete (cascades to chunks) for a conversation's documents. Reuses
+  `get_owned_conversation`.
 - `routers/chat.py` — `/chat/stream`: per-user in-memory fixed-window rate limiter (20
   messages/hour), builds message history via `build_history` (prepends `system_prompt` if
-  set, then prior messages, then the new one), streams OpenAI chat completions as raw text
-  chunks (not SSE-framed), and persists both the user message and the full assistant reply
-  in a `finally` block once the stream ends (so partial replies from a dropped connection
-  still get saved, and the conversation title is set from the first message).
+  set, then — if the conversation has documents — embeds the new message and injects the
+  top-4 retrieved chunks as a second system message, then prior messages, then the new one),
+  streams OpenAI chat completions as raw text chunks (not SSE-framed), and persists both the
+  user message and the full assistant reply in a `finally` block once the stream ends (so
+  partial replies from a dropped connection still get saved, and the conversation title is
+  set from the first message).
 
 ### Frontend (`frontend/src/`)
 
@@ -86,8 +100,10 @@ Browser (React/Vite)  →  FastAPI backend  →  OpenAI API
   any `UnauthorizedError` from an API call logs the user out and drops back to `Login`.
   New conversations are created lazily on first send, using whatever settings are currently
   selected.
-- `Login.tsx`, `Sidebar.tsx`, `SettingsPanel.tsx` — auth form, conversation list, and the
-  model/temperature/system-prompt editor respectively.
+- `Login.tsx`, `Sidebar.tsx`, `SettingsPanel.tsx`, `Documents.tsx` — auth form, conversation
+  list, model/temperature/system-prompt editor, and the attached-files chip list + upload
+  control respectively. Uploading a file with no conversation selected yet lazily creates
+  one first, mirroring how `sendMessage` in `App.tsx` does it.
 - Styling is Tailwind CSS v4 via `@tailwindcss/vite` (no separate Tailwind config file).
 
 ### Conventions worth knowing

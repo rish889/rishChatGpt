@@ -1,9 +1,13 @@
 from datetime import datetime, timezone
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db import Base
+
+# Must match the dimensionality of llm.EMBEDDING_MODEL (text-embedding-3-small).
+EMBEDDING_DIM = 1536
 
 
 def utcnow() -> datetime:
@@ -36,6 +40,9 @@ class Conversation(Base):
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation", order_by="Message.id"
     )
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan"
+    )
 
 
 class Message(Base):
@@ -48,3 +55,31 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+
+
+class Document(Base):
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"))
+    filename: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    conversation: Mapped["Conversation"] = relationship(back_populates="documents")
+    chunks: Mapped[list["Chunk"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
+
+
+class Chunk(Base):
+    __tablename__ = "chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"))
+    # Denormalized from document.conversation_id so retrieval can filter/order
+    # chunks for a conversation without joining through documents.
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"))
+    content: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM))
+
+    document: Mapped["Document"] = relationship(back_populates="chunks")
