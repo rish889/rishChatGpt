@@ -1,16 +1,26 @@
 import { useEffect, useState } from 'react'
 import {
+  type ConversationSettings,
   type ConversationSummary,
   type Message,
   UnauthorizedError,
   createConversation,
   fetchConversations,
   fetchMessages,
+  fetchModels,
   streamChat,
+  updateConversationSettings,
 } from './api'
 import { clearToken, getToken, setToken } from './auth'
 import Login from './Login'
 import Sidebar from './Sidebar'
+import SettingsPanel from './SettingsPanel'
+
+const DEFAULT_SETTINGS: ConversationSettings = {
+  system_prompt: null,
+  model: null,
+  temperature: null,
+}
 
 function App() {
   const [token, setTokenState] = useState<string | null>(() => getToken())
@@ -19,10 +29,14 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
+  const [settings, setSettings] = useState<ConversationSettings>(DEFAULT_SETTINGS)
+  const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [showSettings, setShowSettings] = useState(false)
 
   useEffect(() => {
     if (!token) return
     fetchConversations().then(setConversations).catch(() => {})
+    fetchModels().then(setAvailableModels).catch(() => {})
   }, [token])
 
   function handleAuthenticated(newToken: string) {
@@ -40,6 +54,14 @@ function App() {
 
   async function selectConversation(id: number) {
     setCurrentConversationId(id)
+    const conversation = conversations.find((c) => c.id === id)
+    if (conversation) {
+      setSettings({
+        system_prompt: conversation.system_prompt,
+        model: conversation.model,
+        temperature: conversation.temperature,
+      })
+    }
     try {
       setMessages(await fetchMessages(id))
     } catch (err) {
@@ -50,6 +72,18 @@ function App() {
   function startNewChat() {
     setCurrentConversationId(null)
     setMessages([])
+    setSettings(DEFAULT_SETTINGS)
+  }
+
+  async function updateSettings(patch: Partial<ConversationSettings>) {
+    setSettings((prev) => ({ ...prev, ...patch }))
+    if (currentConversationId === null) return
+    try {
+      const updated = await updateConversationSettings(currentConversationId, patch)
+      setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+    } catch (err) {
+      if (err instanceof UnauthorizedError) logOut()
+    }
   }
 
   async function sendMessage() {
@@ -62,7 +96,7 @@ function App() {
     try {
       let conversationId = currentConversationId
       if (conversationId === null) {
-        const conversation = await createConversation()
+        const conversation = await createConversation(settings)
         conversationId = conversation.id
         setCurrentConversationId(conversationId)
         setConversations((prev) => [conversation, ...prev])
@@ -126,10 +160,25 @@ function App() {
       />
 
       <div className="flex flex-1 flex-col max-w-2xl mx-auto px-4">
-        <header className="py-4 border-b border-neutral-200 dark:border-neutral-800">
+        <header className="relative flex items-center justify-between py-4 border-b border-neutral-200 dark:border-neutral-800">
           <h1 className="text-lg font-medium text-neutral-900 dark:text-neutral-100">
             Build Your Own ChatGPT
           </h1>
+          <button
+            type="button"
+            className="rounded-lg px-2 py-1 text-sm text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            onClick={() => setShowSettings((s) => !s)}
+          >
+            Settings
+          </button>
+          {showSettings && (
+            <SettingsPanel
+              settings={settings}
+              availableModels={availableModels}
+              onChange={updateSettings}
+              onClose={() => setShowSettings(false)}
+            />
+          )}
         </header>
 
         <div className="flex-1 overflow-y-auto py-4 space-y-4">

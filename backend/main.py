@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from auth import create_access_token, get_current_user, hash_password, verify_password
@@ -25,7 +25,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+DEFAULT_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+DEFAULT_TEMPERATURE = 1.0
+ALLOWED_MODELS = {"gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"}
 
 Base.metadata.create_all(bind=engine)
 
@@ -61,12 +63,21 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class ConversationSettings(BaseModel):
+    system_prompt: str | None = None
+    model: str | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+
+
 class ConversationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     title: str | None
     created_at: datetime
+    system_prompt: str | None
+    model: str | None
+    temperature: float | None
 
 
 class MessageOut(BaseModel):
@@ -107,12 +118,46 @@ def login(request: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
     return TokenResponse(access_token=create_access_token(user.id))
 
 
+def validate_settings(settings: ConversationSettings) -> None:
+    if settings.model is not None and settings.model not in ALLOWED_MODELS:
+        raise HTTPException(status_code=400, detail=f"Unsupported model: {settings.model}")
+
+
+@app.get("/models", response_model=list[str])
+def list_models() -> list[str]:
+    return sorted(ALLOWED_MODELS)
+
+
 @app.post("/conversations", response_model=ConversationOut)
 def create_conversation(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    settings: ConversationSettings = ConversationSettings(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Conversation:
-    conversation = Conversation(user_id=current_user.id)
+    validate_settings(settings)
+    conversation = Conversation(
+        user_id=current_user.id,
+        system_prompt=settings.system_prompt,
+        model=settings.model,
+        temperature=settings.temperature,
+    )
     db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    return conversation
+
+
+@app.patch("/conversations/{conversation_id}", response_model=ConversationOut)
+def update_conversation_settings(
+    conversation_id: int,
+    settings: ConversationSettings,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Conversation:
+    validate_settings(settings)
+    conversation = get_owned_conversation(conversation_id, db, current_user)
+    for field, value in settings.model_dump(exclude_unset=True).items():
+        setattr(conversation, field, value)
     db.commit()
     db.refresh(conversation)
     return conversation
@@ -150,7 +195,10 @@ def get_messages(
 
 
 def build_history(conversation: Conversation, new_message: str) -> list[dict]:
-    history = [{"role": m.role, "content": m.content} for m in conversation.messages]
+    history = []
+    if conversation.system_prompt:
+        history.append({"role": "system", "content": conversation.system_prompt})
+    history.extend({"role": m.role, "content": m.content} for m in conversation.messages)
     history.append({"role": "user", "content": new_message})
     return history
 
@@ -173,7 +221,14 @@ def chat_stream(
         full_reply = []
         try:
             stream = client.chat.completions.create(
-                model=model, messages=history, stream=True
+                model=conversation.model or DEFAULT_MODEL,
+                messages=history,
+                temperature=(
+                    conversation.temperature
+                    if conversation.temperature is not None
+                    else DEFAULT_TEMPERATURE
+                ),
+                stream=True,
             )
             for chunk in stream:
                 delta = chunk.choices[0].delta.content
