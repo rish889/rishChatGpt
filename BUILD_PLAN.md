@@ -91,11 +91,13 @@ Database (users, conversations, messages)
 - Implemented in `backend/models.py`, `backend/main.py`, and
   `frontend/src/{App.tsx,SettingsPanel.tsx,api.ts}`.
 
-### Phase 6 — Tool use / RAG (optional, advanced)
+### Phase 6 — RAG
 - File upload → embed → retrieve → inject into context (basic RAG).
-- Or: give the model tools (web search, code execution) via the provider's tool-use API.
 
-### Phase 7 — Production hardening
+### Phase 7 — Tool use
+- give the model tools (web search, code execution) via the provider's tool-use API.
+
+### Phase 8 — Production hardening
 - Streaming error handling/retries, request timeouts, cost/usage logging.
 - Dockerize, add CI, deploy, add basic observability (logs/metrics).
 
@@ -110,5 +112,4 @@ BUILD_PLAN.md this file
 
 ## Next step
 
-Phases 0–5 are done. Next: Phase 6 — tool use / RAG (optional, advanced), or Phase 7 —
-production hardening (streaming error handling, retries, timeouts, observability).
+Phases 0–5 are done.
