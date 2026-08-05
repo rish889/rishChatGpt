@@ -8,3 +8,4 @@ pyjwt
 bcrypt
 pgvector
 pypdf
+python-multipart

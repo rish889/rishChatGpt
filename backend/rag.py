@@ -14,11 +14,15 @@ TOP_K = 4
 def extract_text(filename: str, content: bytes) -> str:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext in ("txt", "md"):
-        return content.decode("utf-8", errors="ignore")
-    if ext == "pdf":
+        text = content.decode("utf-8", errors="ignore")
+    elif ext == "pdf":
         reader = PdfReader(io.BytesIO(content))
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
-    raise ValueError(f"Unsupported file type: .{ext or '?'} (use .txt, .md, or .pdf)")
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    else:
+        raise ValueError(f"Unsupported file type: .{ext or '?'} (use .txt, .md, or .pdf)")
+    # Malformed PDFs can yield recovered text containing NUL bytes, which
+    # Postgres text columns reject outright.
+    return text.replace("\x00", "")
 
 
 def chunk_text(

@@ -1,2 +1,14 @@
 cd /home/rishabh/workspace/rish/rishChatGpt/infra && docker compose down -v
 cd /home/rishabh/workspace/rish/rishChatGpt/infra && docker compose up -d
+
+docker compose exec postgres psql -U rishchatgpt -d rishchatgpt
+\dt
+
+
+
+select * from users;
+select * from conversations;
+select * from messages;
+select * from documents;
+select id, document_id, conversation_id from chunks;
+select * from chunks;
