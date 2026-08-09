@@ -6,3 +6,6 @@ sqlalchemy
 psycopg2-binary
 pyjwt
 bcrypt
+pgvector
+pypdf
+python-multipart

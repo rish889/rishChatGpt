@@ -1,7 +1,7 @@
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 load_dotenv()
@@ -14,6 +14,10 @@ DATABASE_URL = os.environ.get(
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
+
+with engine.connect() as conn:
+    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    conn.commit()
 
 
 def get_db():
