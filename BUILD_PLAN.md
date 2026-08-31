@@ -110,8 +110,26 @@ Database (users, conversations, messages)
   routers/chat.py,main.py}`, `infra/docker-compose.yml`, and
   `frontend/src/{api.ts,Documents.tsx,App.tsx}`.
 
-### Phase 7 — Tool use
-- give the model tools (web search, code execution) via the provider's tool-use API.
+### Phase 7 — Tool use ✅ done
+- `backend/tools.py` defines the tool-use surface: `TOOL_SCHEMAS` (OpenAI function-calling
+  schemas), a `web_search` tool backed by the Tavily API (`TAVILY_API_KEY`, keyless-free
+  results if unset — it just tells the model search isn't configured), a `calculate` tool
+  that evaluates arithmetic via a whitelisted `ast` walk (no `eval`, so it can't run
+  arbitrary code), and `call_tool(name, arguments)` as the dispatcher.
+- `chat_stream`'s `token_stream` now runs a bounded loop (`MAX_TOOL_ITERATIONS = 5`): it
+  calls the model with `tools=TOOL_SCHEMAS`, accumulates streamed `delta.tool_calls`
+  fragments by index (id/name/arguments all arrive piecemeal), and on `finish_reason ==
+  "tool_calls"` executes each call, appends the assistant tool-call message plus a `tool`
+  role message per result, and loops back to the model with the extended history. It stops
+  looping (and starts persisting) once a turn finishes with plain content instead of a tool
+  call.
+- Tool invocations are surfaced to the client as plain `[using <tool>: <args>]` lines
+  interleaved in the raw text stream (consistent with the existing non-SSE streaming
+  approach) but are *not* included in `full_reply`, so they never get persisted to the
+  `messages` table — only the model's real reply is saved.
+- Implemented in `backend/{tools.py,routers/chat.py,requirements.txt,.env.example}`. No
+  frontend changes needed — the existing raw-text stream renderer just displays the tool
+  markers inline.
 
 ### Phase 8 — Production hardening
 - Streaming error handling/retries, request timeouts, cost/usage logging.
@@ -128,4 +146,4 @@ BUILD_PLAN.md this file
 
 ## Next step
 
-Phases 0–6 are done.
+Phases 0–7 are done.

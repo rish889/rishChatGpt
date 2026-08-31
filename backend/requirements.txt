@@ -9,3 +9,4 @@ bcrypt
 pgvector
 pypdf
 python-multipart
+httpx

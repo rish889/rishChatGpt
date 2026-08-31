@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from time import time
 
@@ -12,11 +13,13 @@ from llm import DEFAULT_MODEL, DEFAULT_TEMPERATURE, client
 from models import Conversation, Message, User
 from rag import retrieve_relevant_chunks
 from routers.conversations import TITLE_LENGTH, get_owned_conversation
+from tools import TOOL_SCHEMAS, call_tool
 
 router = APIRouter()
 
 RATE_LIMIT_MAX_MESSAGES = 20
 RATE_LIMIT_WINDOW_SECONDS = 60 * 60
+MAX_TOOL_ITERATIONS = 5
 
 _rate_limit_log: dict[int, list[float]] = defaultdict(list)
 
@@ -78,21 +81,80 @@ def chat_stream(
     def token_stream():
         full_reply = []
         try:
-            stream = client.chat.completions.create(
-                model=conversation.model or DEFAULT_MODEL,
-                messages=history,
-                temperature=(
-                    conversation.temperature
-                    if conversation.temperature is not None
-                    else DEFAULT_TEMPERATURE
-                ),
-                stream=True,
-            )
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    full_reply.append(delta)
-                    yield delta
+            messages = list(history)
+            for _ in range(MAX_TOOL_ITERATIONS):
+                stream = client.chat.completions.create(
+                    model=conversation.model or DEFAULT_MODEL,
+                    messages=messages,
+                    temperature=(
+                        conversation.temperature
+                        if conversation.temperature is not None
+                        else DEFAULT_TEMPERATURE
+                    ),
+                    tools=TOOL_SCHEMAS,
+                    stream=True,
+                )
+
+                content_parts = []
+                tool_calls: dict[int, dict] = {}
+                finish_reason = None
+                for chunk in stream:
+                    choice = chunk.choices[0]
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+                    delta = choice.delta
+                    if delta.content:
+                        content_parts.append(delta.content)
+                        full_reply.append(delta.content)
+                        yield delta.content
+                    for tc_delta in delta.tool_calls or []:
+                        entry = tool_calls.setdefault(
+                            tc_delta.index, {"id": "", "name": "", "arguments": ""}
+                        )
+                        if tc_delta.id:
+                            entry["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                entry["name"] += tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                entry["arguments"] += tc_delta.function.arguments
+
+                if finish_reason != "tool_calls" or not tool_calls:
+                    break
+
+                ordered_calls = [tool_calls[i] for i in sorted(tool_calls)]
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "".join(content_parts) or None,
+                        "tool_calls": [
+                            {
+                                "id": tc["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": tc["name"],
+                                    "arguments": tc["arguments"],
+                                },
+                            }
+                            for tc in ordered_calls
+                        ],
+                    }
+                )
+                for tc in ordered_calls:
+                    try:
+                        args = json.loads(tc["arguments"] or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    label = args.get("query") or args.get("expression") or ""
+                    yield f"\n[using {tc['name']}: {label}]\n"
+                    result = call_tool(tc["name"], args)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result,
+                        }
+                    )
         finally:
             db.add(
                 Message(

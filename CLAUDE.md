@@ -11,9 +11,9 @@ phase implemented) — read it before making structural changes, since it explai
 are built the way they are (e.g. why `users` was deferred to Phase 4, why streaming uses plain
 chunked text instead of SSE, why rate limiting is in-memory).
 
-Phases 0–6 are done (hello-world script, single-turn chat, streaming chat UI, conversation
+Phases 0–7 are done (hello-world script, single-turn chat, streaming chat UI, conversation
 history/persistence, auth/multi-user, per-conversation system prompt/model/temperature
-settings, per-conversation document RAG). Phases 7–8 (tool use, production hardening) are not
+settings, per-conversation document RAG, tool use). Phase 8 (production hardening) is not
 started.
 
 ## Commands
@@ -23,7 +23,9 @@ Backend (from `backend/`, after `python3 -m venv venv && source venv/bin/activat
 uvicorn main:app --reload          # run API on http://127.0.0.1:8000 (docs at /docs)
 ```
 Requires `backend/.env` (copy from `backend/.env.example`): `OPENAI_API_KEY`, `OPENAI_MODEL`,
-`DATABASE_URL`, `JWT_SECRET`. There is no test suite and no lint config for the backend.
+`DATABASE_URL`, `JWT_SECRET`. `TAVILY_API_KEY` is optional — without it the `web_search` tool
+just tells the model search isn't configured, everything else still works. There is no test
+suite and no lint config for the backend.
 
 Frontend (from `frontend/`):
 ```
@@ -71,6 +73,10 @@ Browser (React/Vite)  →  FastAPI backend  →  OpenAI API
   `chunk_text()` (character-based, ~1000 chars with 150 overlap — no tokenizer), and
   `retrieve_relevant_chunks()` (pgvector cosine-distance `ORDER BY ... LIMIT` scoped to one
   conversation).
+- `tools.py` — the tool-use surface: `TOOL_SCHEMAS` (OpenAI function-calling schemas),
+  `web_search` (Tavily API, needs `TAVILY_API_KEY`), `calculate` (arithmetic via a
+  whitelisted `ast` walk, never `eval`), and `call_tool(name, arguments)` as the dispatcher
+  used by `routers/chat.py`.
 - `auth.py` — bcrypt password hashing, JWT issuance/verification (`pyjwt`, 7-day expiry),
   `get_current_user` FastAPI dependency used to gate every conversation/chat/document route.
 - `routers/auth.py` — `/auth/signup`, `/auth/login`.
@@ -85,10 +91,15 @@ Browser (React/Vite)  →  FastAPI backend  →  OpenAI API
   messages/hour), builds message history via `build_history` (prepends `system_prompt` if
   set, then — if the conversation has documents — embeds the new message and injects the
   top-4 retrieved chunks as a second system message, then prior messages, then the new one),
-  streams OpenAI chat completions as raw text chunks (not SSE-framed), and persists both the
-  user message and the full assistant reply in a `finally` block once the stream ends (so
-  partial replies from a dropped connection still get saved, and the conversation title is
-  set from the first message).
+  streams OpenAI chat completions as raw text chunks (not SSE-framed). `token_stream` runs a
+  bounded loop (`MAX_TOOL_ITERATIONS`), passing `tools=TOOL_SCHEMAS`: it accumulates streamed
+  `delta.tool_calls` fragments by index, and on `finish_reason == "tool_calls"` executes each
+  call via `tools.call_tool`, appends the assistant tool-call message plus a `tool` message
+  per result, and loops back to the model — a `[using <tool>: <args>]` marker is yielded into
+  the stream (but excluded from what gets persisted) so the client sees when a tool fires.
+  Persists both the user message and the full assistant reply (tool markers excluded) in a
+  `finally` block once the stream ends (so partial replies from a dropped connection still
+  get saved, and the conversation title is set from the first message).
 
 ### Frontend (`frontend/src/`)
 
