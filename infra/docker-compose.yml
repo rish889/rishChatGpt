@@ -9,6 +9,32 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rishchatgpt"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ../backend
+    env_file:
+      - ../backend/.env
+    environment:
+      # Overrides whatever's in .env: inside the compose network the DB is
+      # reachable at the service name, not localhost.
+      DATABASE_URL: postgresql+psycopg2://rishchatgpt:rishchatgpt@postgres:5432/rishchatgpt
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build: ../frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:

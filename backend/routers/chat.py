@@ -1,7 +1,9 @@
 import json
+import logging
 from collections import defaultdict
-from time import time
+from time import perf_counter, time
 
+import openai
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -9,13 +11,14 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from db import SessionLocal
-from llm import DEFAULT_MODEL, DEFAULT_TEMPERATURE, client
+from llm import DEFAULT_MODEL, DEFAULT_TEMPERATURE, client, estimate_cost
 from models import Conversation, Message, User
 from rag import retrieve_relevant_chunks
 from routers.conversations import TITLE_LENGTH, get_owned_conversation
 from tools import TOOL_SCHEMAS, call_tool
 
 router = APIRouter()
+logger = logging.getLogger("chat")
 
 RATE_LIMIT_MAX_MESSAGES = 20
 RATE_LIMIT_WINDOW_SECONDS = 60 * 60
@@ -82,42 +85,78 @@ def chat_stream(
         full_reply = []
         try:
             messages = list(history)
+            model_used = conversation.model or DEFAULT_MODEL
             for _ in range(MAX_TOOL_ITERATIONS):
-                stream = client.chat.completions.create(
-                    model=conversation.model or DEFAULT_MODEL,
-                    messages=messages,
-                    temperature=(
-                        conversation.temperature
-                        if conversation.temperature is not None
-                        else DEFAULT_TEMPERATURE
-                    ),
-                    tools=TOOL_SCHEMAS,
-                    stream=True,
-                )
+                iteration_start = perf_counter()
+                usage = None
+                try:
+                    stream = client.chat.completions.create(
+                        model=model_used,
+                        messages=messages,
+                        temperature=(
+                            conversation.temperature
+                            if conversation.temperature is not None
+                            else DEFAULT_TEMPERATURE
+                        ),
+                        tools=TOOL_SCHEMAS,
+                        stream=True,
+                        stream_options={"include_usage": True},
+                    )
 
-                content_parts = []
-                tool_calls: dict[int, dict] = {}
-                finish_reason = None
-                for chunk in stream:
-                    choice = chunk.choices[0]
-                    if choice.finish_reason:
-                        finish_reason = choice.finish_reason
-                    delta = choice.delta
-                    if delta.content:
-                        content_parts.append(delta.content)
-                        full_reply.append(delta.content)
-                        yield delta.content
-                    for tc_delta in delta.tool_calls or []:
-                        entry = tool_calls.setdefault(
-                            tc_delta.index, {"id": "", "name": "", "arguments": ""}
-                        )
-                        if tc_delta.id:
-                            entry["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                entry["name"] += tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                entry["arguments"] += tc_delta.function.arguments
+                    content_parts = []
+                    tool_calls: dict[int, dict] = {}
+                    finish_reason = None
+                    for chunk in stream:
+                        if chunk.usage:
+                            usage = chunk.usage
+                        if not chunk.choices:
+                            continue
+                        choice = chunk.choices[0]
+                        if choice.finish_reason:
+                            finish_reason = choice.finish_reason
+                        delta = choice.delta
+                        if delta.content:
+                            content_parts.append(delta.content)
+                            full_reply.append(delta.content)
+                            yield delta.content
+                        for tc_delta in delta.tool_calls or []:
+                            entry = tool_calls.setdefault(
+                                tc_delta.index, {"id": "", "name": "", "arguments": ""}
+                            )
+                            if tc_delta.id:
+                                entry["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    entry["name"] += tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    entry["arguments"] += tc_delta.function.arguments
+                except openai.APIError:
+                    # Covers both connection/timeout failures (the SDK already retried
+                    # those internally before giving up) and mid-stream failures after
+                    # some content may already have been yielded to the client, which
+                    # can't be retried transparently without duplicating output.
+                    logger.exception(
+                        "chat completion failed conversation=%s user=%s",
+                        conversation.id,
+                        current_user.id,
+                    )
+                    yield "\n[error: trouble reaching the model right now, please try again]\n"
+                    break
+
+                if usage:
+                    cost = estimate_cost(model_used, usage.prompt_tokens, usage.completion_tokens)
+                    logger.info(
+                        "usage conversation=%s user=%s model=%s prompt_tokens=%d "
+                        "completion_tokens=%d total_tokens=%d cost_usd=%.6f latency_ms=%.1f",
+                        conversation.id,
+                        current_user.id,
+                        model_used,
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                        usage.total_tokens,
+                        cost,
+                        (perf_counter() - iteration_start) * 1000,
+                    )
 
                 if finish_reason != "tool_calls" or not tool_calls:
                     break

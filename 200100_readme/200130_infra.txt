@@ -1,5 +1,10 @@
 cd /home/rishabh/workspace/rish/rishChatGpt/infra && docker compose down -v
+cd /home/rishabh/workspace/rish/rishChatGpt/infra && docker compose down
 cd /home/rishabh/workspace/rish/rishChatGpt/infra && docker compose up -d
+
+
+cd /home/rishabh/workspace/rish/rishChatGpt/infra && docker compose up -d postgres
+
 
 docker compose exec postgres psql -U rishchatgpt -d rishchatgpt
 \dt

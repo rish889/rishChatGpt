@@ -11,10 +11,10 @@ phase implemented) — read it before making structural changes, since it explai
 are built the way they are (e.g. why `users` was deferred to Phase 4, why streaming uses plain
 chunked text instead of SSE, why rate limiting is in-memory).
 
-Phases 0–7 are done (hello-world script, single-turn chat, streaming chat UI, conversation
+Phases 0–8 are done (hello-world script, single-turn chat, streaming chat UI, conversation
 history/persistence, auth/multi-user, per-conversation system prompt/model/temperature
-settings, per-conversation document RAG, tool use). Phase 8 (production hardening) is not
-started.
+settings, per-conversation document RAG, tool use, production hardening). The "deploy" part
+of Phase 8 was intentionally skipped — no hosting platform has been chosen yet.
 
 ## Commands
 
@@ -37,16 +37,24 @@ npm run lint          # oxlint
 
 Infra (from `infra/`):
 ```
-docker compose up -d      # start Postgres w/ pgvector (rishchatgpt/rishchatgpt on :5432)
+docker compose up -d      # build+start postgres, backend (:8000), frontend (:5173)
 docker compose down -v    # stop and wipe the volume
 ```
-The `vector` extension (`CREATE EXTENSION IF NOT EXISTS vector`) is enabled automatically by
-`backend/db.py` on startup — the Postgres image must be `pgvector/pgvector:pg16` (not plain
-`postgres`) for that to succeed.
+This now brings up the whole stack, not just Postgres — `backend` and `frontend` services
+build from `backend/Dockerfile` / `frontend/Dockerfile` (the latter is a multi-stage
+`npm run build` → nginx image). `backend` requires `backend/.env` to exist (loaded via
+`env_file`; `DATABASE_URL` is overridden in the compose file to point at the `postgres`
+service name rather than `localhost`). The `vector` extension (`CREATE EXTENSION IF NOT
+EXISTS vector`) is enabled automatically by `backend/db.py` on startup — the Postgres image
+must be `pgvector/pgvector:pg16` (not plain `postgres`) for that to succeed, and `postgres`
+has a `pg_isready` healthcheck that `backend` waits on.
 
-There are no automated tests anywhere in this repo. Verify backend changes via `/docs`
-(Swagger UI) or curl; verify frontend changes with `tsc --noEmit` plus manually exercising the
-UI at localhost:5173.
+There are no automated tests anywhere in this repo. `.github/workflows/ci.yml` runs on
+push/PR: a backend job installs `requirements.txt` and runs `python -m compileall` (a
+syntax/import sanity check, not real coverage, since there's still no test suite); a
+frontend job runs `tsc --noEmit`, `npm run lint`, and `npm run build`. Verify backend
+changes locally via `/docs` (Swagger UI) or curl; verify frontend changes with `tsc
+--noEmit` plus manually exercising the UI at localhost:5173.
 
 ## Architecture
 
@@ -59,16 +67,23 @@ Browser (React/Vite)  →  FastAPI backend  →  OpenAI API
 ### Backend (`backend/`)
 
 - `main.py` — FastAPI app setup, CORS (locked to `http://localhost:5173`), mounts routers,
-  creates tables on startup via `Base.metadata.create_all`.
+  creates tables on startup via `Base.metadata.create_all`. Calls `configure_logging()` at
+  import time and installs an HTTP middleware that logs `METHOD path -> status (Nms)` for
+  every request (and `logger.exception(...)` before re-raising on an unhandled error).
+- `logging_config.py` — one-line `configure_logging()` (stdlib `logging.basicConfig`),
+  called once from `main.py` so log format is consistent everywhere.
 - `db.py` — SQLAlchemy engine/session (`SessionLocal`, `get_db` dependency), `DATABASE_URL`
   from env.
 - `models.py` — five tables: `User`, `Conversation` (owns `system_prompt`/`model`/
   `temperature` overrides, scoped to a user), `Message` (role + content, ordered by id),
   `Document` and `Chunk` (RAG — see below). `EMBEDDING_DIM` here must match
   `llm.EMBEDDING_MODEL`'s output size.
-- `llm.py` — OpenAI client singleton, `DEFAULT_MODEL`, `DEFAULT_TEMPERATURE`, and
-  `ALLOWED_MODELS` (the server-side whitelist — any model not in this set is rejected with
-  400 before it reaches the stream); `EMBEDDING_MODEL` and `embed_texts()` for RAG.
+- `llm.py` — OpenAI client singleton (`timeout=60.0, max_retries=2` — the SDK's own
+  exponential-backoff retry for connection errors/timeouts/429/5xx), `DEFAULT_MODEL`,
+  `DEFAULT_TEMPERATURE`, and `ALLOWED_MODELS` (the server-side whitelist — any model not in
+  this set is rejected with 400 before it reaches the stream); `EMBEDDING_MODEL` and
+  `embed_texts()` for RAG; `MODEL_PRICING` (hand-maintained $/1M-token snapshot) and
+  `estimate_cost()` for the usage logging in `routers/chat.py`.
 - `rag.py` — `extract_text()` (`.txt`/`.md` decoded directly, `.pdf` via `pypdf`),
   `chunk_text()` (character-based, ~1000 chars with 150 overlap — no tokenizer), and
   `retrieve_relevant_chunks()` (pgvector cosine-distance `ORDER BY ... LIMIT` scoped to one
@@ -97,9 +112,15 @@ Browser (React/Vite)  →  FastAPI backend  →  OpenAI API
   call via `tools.call_tool`, appends the assistant tool-call message plus a `tool` message
   per result, and loops back to the model — a `[using <tool>: <args>]` marker is yielded into
   the stream (but excluded from what gets persisted) so the client sees when a tool fires.
-  Persists both the user message and the full assistant reply (tool markers excluded) in a
-  `finally` block once the stream ends (so partial replies from a dropped connection still
-  get saved, and the conversation title is set from the first message).
+  Each API call passes `stream_options={"include_usage": True}` and, once its chunks are
+  fully consumed, logs a `usage ...` line (tokens + `llm.estimate_cost` estimate + latency)
+  via the stdlib `logging` module. Each iteration's `create()` + chunk consumption is wrapped
+  in `try/except openai.APIError`: on failure it logs the exception, yields an
+  `[error: ...]` marker (also excluded from persistence), and stops the tool loop — this
+  catches failures the SDK's own retries can't cover, like the connection dropping mid-stream
+  after content was already sent to the client. Persists both the user message and the full
+  assistant reply (tool/error markers excluded) in a `finally` block once the stream ends (so
+  partial replies still get saved, and the conversation title is set from the first message).
 
 ### Frontend (`frontend/src/`)
 
