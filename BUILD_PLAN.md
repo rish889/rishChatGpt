@@ -131,9 +131,46 @@ Database (users, conversations, messages)
   frontend changes needed — the existing raw-text stream renderer just displays the tool
   markers inline.
 
-### Phase 8 — Production hardening
-- Streaming error handling/retries, request timeouts, cost/usage logging.
-- Dockerize, add CI, deploy, add basic observability (logs/metrics).
+### Phase 8 — Production hardening ✅ done (deploy step intentionally skipped)
+- `llm.py`'s OpenAI `client` now sets `timeout=60.0, max_retries=2` (the SDK's own
+  exponential-backoff retry for connection errors/timeouts/429/5xx on a given request).
+  `chat_stream`'s per-iteration API call is additionally wrapped in `try/except
+  openai.APIError` to catch failures the SDK can't retry transparently (e.g. the connection
+  drops mid-stream after content has already been yielded to the client) — on failure it
+  logs the exception, yields a `[error: ...]` marker into the stream (same non-persisted
+  pattern as the Phase 7 tool markers), and stops the tool loop so the `finally` block still
+  persists whatever partial reply was generated.
+- Every `chat.completions.create` call passes `stream_options={"include_usage": True}`; the
+  trailing usage-only chunk (empty `choices`, populated `usage`) is now handled explicitly.
+  `chat_stream` logs one `usage ...` line per API call (conversation id, user id, model,
+  prompt/completion/total tokens, an estimated cost via `llm.estimate_cost` /
+  `llm.MODEL_PRICING`, latency) through the stdlib `logging` module — stdout only, no new
+  table, since this is for grepping/piping, not historical querying.
+- `backend/logging_config.py` configures stdlib logging once at startup; `main.py` adds an
+  HTTP middleware that logs `METHOD path -> status (Nms)` for every request (and
+  `logger.exception(...)` before re-raising on an unhandled error) — this is the "basic
+  observability" layer, deliberately not a `/metrics` scrape endpoint.
+- Dockerized: `backend/Dockerfile` (python:3.12-slim, installs `requirements.txt`, runs
+  uvicorn on :8000) and `frontend/Dockerfile` (multi-stage: `node:20-alpine` runs `npm ci
+  && npm run build`, then `nginx:alpine` serves the built `dist/` via `frontend/nginx.conf`,
+  SPA-style `try_files ... /index.html` fallback). `infra/docker-compose.yml` gained
+  `backend` and `frontend` services alongside `postgres`; postgres now has a `pg_isready`
+  healthcheck and backend `depends_on` it with `condition: service_healthy`. Backend gets
+  secrets via `env_file: ../backend/.env` but `DATABASE_URL` is overridden in compose to
+  point at the `postgres` service name instead of `localhost`, since that's what's
+  resolvable inside the compose network. `docker compose up -d` from `infra/` now brings up
+  the whole stack (frontend on :5173, backend on :8000, postgres on :5432), not just
+  postgres.
+- CI: `.github/workflows/ci.yml` runs on push/PR — a `backend` job installs
+  `requirements.txt` and runs `python -m compileall` (there's still no test suite, so this
+  is a syntax/import sanity check, not real coverage); a `frontend` job runs `npm ci`,
+  `tsc --noEmit`, `npm run lint` (oxlint), and `npm run build`.
+- Deploy was explicitly scoped out — no hosting platform chosen yet, so there's nothing to
+  target. Dockerizing means whichever platform gets picked later (Fly.io, Railway, Render,
+  etc.) can mostly just build from the existing Dockerfiles.
+- Implemented in `backend/{llm.py,logging_config.py,main.py,routers/chat.py,Dockerfile,
+  .dockerignore}`, `frontend/{Dockerfile,nginx.conf,.dockerignore}`,
+  `infra/docker-compose.yml`, and `.github/workflows/ci.yml`.
 
 ## Suggested repo layout once you start coding
 
@@ -146,4 +183,4 @@ BUILD_PLAN.md this file
 
 ## Next step
 
-Phases 0–7 are done.
+Phases 0–8 are done (deploy intentionally left for whenever a hosting platform is chosen).
